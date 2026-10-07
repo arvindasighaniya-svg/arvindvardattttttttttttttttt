@@ -118,4 +118,39 @@ def send_batch():
                 msg["Subject"] = curr_subject
                 msg["Date"] = formatdate(localtime=True)
                 
-                domain = gmail.split("@")[-1] if
+                domain = gmail.split("@")[-1] if "@" in gmail else "gmail.com"
+                msg["Message-ID"] = make_msgid(domain=domain)
+                
+                # High Deliverability Headers
+                msg["X-Mailer"] = "Secure Mail Console v2.0"
+                msg["Auto-Submitted"] = "auto-generated"
+
+                if is_html:
+                    msg.attach(MIMEText(curr_body, "html", "utf-8"))
+                else:
+                    msg.attach(MIMEText(curr_body, "plain", "utf-8"))
+
+                server.sendmail(gmail, [recipient], msg.as_string())
+                sent += 1
+
+                # Reduced delay (0.5s - 1s) to prevent Vercel Function 10s Timeout
+                time.sleep(random.uniform(0.5, 1.0))
+
+            except Exception:
+                failed += 1
+
+            remaining = total - (sent + failed)
+            yield json.dumps({"type": "progress", "total": total, "sent": sent, "failed": failed, "remaining": remaining}) + "\n"
+
+        if server:
+            try:
+                server.quit()
+            except Exception:
+                pass
+
+        yield json.dumps({"type": "complete", "total": total, "sent": sent, "failed": failed, "remaining": 0, "message": f"Done! Sent: {sent}, Failed: {failed}"}) + "\n"
+
+    return Response(generate_events(), mimetype="application/x-ndjson")
+
+# Expose app for Vercel
+app = app
