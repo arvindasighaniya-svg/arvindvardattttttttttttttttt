@@ -45,7 +45,7 @@ def authenticated():
     return session.get("authenticated") is True
 
 # =========================================================
-# SPINTAX - ALWAYS ON (FOR HIGH INBOX DELIVERABILITY)
+# SPINTAX PARSER
 # =========================================================
 
 SPINTAX_RE = re.compile(r"\{([^{}]+)\}")
@@ -68,12 +68,11 @@ def expand_spintax(text):
     return text
 
 # =========================================================
-# TURNSTILE
+# TURNSTILE VERIFICATION
 # =========================================================
 
 def verify_turnstile(token, remote_ip=None):
     if not TURNSTILE_SECRET_KEY:
-        # If site key is not configured, pass validation automatically
         return True, None
 
     if not token:
@@ -109,7 +108,7 @@ def verify_turnstile(token, remote_ip=None):
         return False, "Unable to verify Cloudflare."
 
 # =========================================================
-# LOGIN
+# LOGIN & LOGOUT
 # =========================================================
 
 @app.route("/login", methods=["GET", "POST"])
@@ -133,10 +132,6 @@ def login():
 
     return render_template("login.html", error=error)
 
-# =========================================================
-# LOGOUT
-# =========================================================
-
 @app.route("/logout")
 def logout():
     session.clear()
@@ -157,7 +152,7 @@ def home():
     )
 
 # =========================================================
-# SEND BATCH
+# SEND BATCH (STREAMING FIX FOR VERCEL & FRONTEND)
 # =========================================================
 
 @app.route("/send-batch", methods=["POST"])
@@ -168,7 +163,10 @@ def send_batch():
             "message": "Authentication required."
         }), 401
 
-    data = request.get_json(silent=True) or {}
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+    except Exception:
+        return jsonify({"success": False, "message": "Invalid JSON payload."}), 400
 
     sender_name = str(data.get("sender_name", "")).strip()
     gmail = str(data.get("gmail", "")).strip().lower()
@@ -185,39 +183,4 @@ def send_batch():
     if not valid_email(gmail):
         return jsonify({"success": False, "message": "Enter a valid Gmail address."}), 400
 
-    if not app_password:
-        return jsonify({"success": False, "message": "Google App Password is required."}), 400
-
-    if not subject:
-        return jsonify({"success": False, "message": "Email subject is required."}), 400
-
-    if not body.strip():
-        return jsonify({"success": False, "message": "Message body is required."}), 400
-
-    if not isinstance(recipients, list):
-        return jsonify({"success": False, "message": "Invalid recipient list."}), 400
-
-    clean_recipients = []
-    for item in recipients:
-        email = str(item).strip().lower()
-        if valid_email(email) and email not in clean_recipients:
-            clean_recipients.append(email)
-
-    clean_recipients = clean_recipients[:MAX_RECIPIENTS]
-
-    if not clean_recipients:
-        return jsonify({"success": False, "message": "No valid recipients found."}), 400
-
-    verified, verify_error = verify_turnstile(
-        turnstile_token,
-        request.headers.get("X-Forwarded-For", request.remote_addr)
-    )
-
-    if not verified:
-        return jsonify({"success": False, "message": verify_error}), 403
-
-    @stream_with_context
-    def generate():
-        total = len(clean_recipients)
-        sent_count = 0
-        failed_count
+    if not app
