@@ -112,7 +112,7 @@ def verify_turnstile(token, remote_ip=None):
         return False, "Unable to verify Cloudflare."
 
 # =========================================================
-# AUTHENTICATION ROUTES
+# AUTH ROUTES
 # =========================================================
 
 @app.route("/login", methods=["GET", "POST"])
@@ -152,7 +152,7 @@ def home():
     )
 
 # =========================================================
-# SEND BATCH - INBOX HIGH DELIVERABILITY ENGINE
+# SEND BATCH - STABLE & HIGH INBOX DELIVERABILITY
 # =========================================================
 
 @app.route("/send-batch", methods=["POST"])
@@ -212,4 +212,151 @@ def send_batch():
     )
 
     if not verified:
-        return jsonify({"success": False, "message": verify_error
+        return jsonify({"success": False, "message": verify_error}), 403
+
+    @stream_with_context
+    def generate():
+        total = len(clean_recipients)
+        sent_count = 0
+        failed_count = 0
+        remaining = total
+
+        yield json.dumps({
+            "type": "start",
+            "total": total,
+            "sent": 0,
+            "failed": 0,
+            "remaining": total
+        }) + "\n"
+
+        context = ssl.create_default_context()
+
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=12) as server:
+                server.login(gmail, app_password)
+
+                for recipient in clean_recipients:
+                    try:
+                        # Dynamic Spintax per email
+                        final_subject = expand_spintax(subject)
+                        final_body = expand_spintax(body)
+
+                        # Proper MultiPart Structure
+                        msg = MIMEMultipart("alternative")
+                        msg["From"] = formataddr((sender_name, gmail))
+                        msg["To"] = recipient
+                        msg["Subject"] = final_subject
+                        msg["Date"] = formatdate(localtime=True)
+
+                        # RFC compliant Message-ID
+                        domain = gmail.split("@")[-1] if "@" in gmail else "gmail.com"
+                        msg["Message-ID"] = make_msgid(domain=domain)
+
+                        content_type = "html" if is_html else "plain"
+                        msg.attach(MIMEText(final_body, content_type, "utf-8"))
+
+                        server.sendmail(gmail, [recipient], msg.as_string())
+
+                        sent_count += 1
+                        remaining -= 1
+
+                        yield json.dumps({
+                            "type": "progress",
+                            "email": recipient,
+                            "result": "sent",
+                            "total": total,
+                            "sent": sent_count,
+                            "failed": failed_count,
+                            "remaining": remaining
+                        }) + "\n"
+
+                        # Brief pause for inbox trust
+                        time.sleep(0.5)
+
+                    except Exception as exc:
+                        failed_count += 1
+                        remaining -= 1
+
+                        yield json.dumps({
+                            "type": "progress",
+                            "email": recipient,
+                            "result": "failed",
+                            "error": str(exc),
+                            "total": total,
+                            "sent": sent_count,
+                            "failed": failed_count,
+                            "remaining": remaining
+                        }) + "\n"
+
+        except smtplib.SMTPAuthenticationError:
+            yield json.dumps({
+                "type": "error",
+                "message": "Gmail authentication failed. Check Gmail and App Password.",
+                "total": total,
+                "sent": sent_count,
+                "failed": failed_count,
+                "remaining": remaining
+            }) + "\n"
+            return
+
+        except smtplib.SMTPException as exc:
+            yield json.dumps({
+                "type": "error",
+                "message": f"SMTP connection error: {str(exc)}",
+                "total": total,
+                "sent": sent_count,
+                "failed": failed_count,
+                "remaining": remaining
+            }) + "\n"
+            return
+
+        except Exception as exc:
+            yield json.dumps({
+                "type": "error",
+                "message": f"Server error: {str(exc)}",
+                "total": total,
+                "sent": sent_count,
+                "failed": failed_count,
+                "remaining": remaining
+            }) + "\n"
+            return
+
+        yield json.dumps({
+            "type": "complete",
+            "success": True,
+            "message": "sending compleate Babu❤️",
+            "total": total,
+            "sent": sent_count,
+            "failed": failed_count,
+            "remaining": remaining
+        }) + "\n"
+
+    return Response(
+        generate(),
+        mimetype="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive"
+        }
+    )
+
+# =========================================================
+# HEALTH CHECK
+# =========================================================
+
+@app.route("/health")
+def health():
+    return jsonify({
+        "status": "ok",
+        "service": "Secure Mail Console",
+        "mailer": "Gmail SMTP",
+        "spintax": "always_on"
+    })
+
+if __name__ == "__main__":
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=True
+    )
