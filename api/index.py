@@ -4,14 +4,18 @@ import re
 import smtplib
 import random
 import time
-import uuid
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr, formatdate, make_msgid
 from flask import Flask, render_template, request, jsonify, Response, session, redirect, url_for
 import requests
 
-app = Flask(__name__, template_folder='../templates', static_folder='../static')
+# Fix Paths for Vercel Serverless Function Environment
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
+STATIC_DIR = os.path.join(BASE_DIR, 'static')
+
+app = Flask(__name__, template_folder=TEMPLATE_DIR, static_folder=STATIC_DIR)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "super-secret-key-change-this")
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
@@ -20,6 +24,8 @@ TURNSTILE_SITE_KEY = os.environ.get("TURNSTILE_SITE_KEY", "")
 
 def parse_spintax(text):
     """Spintax parser: {Hello|Hi|Hey} -> Random selection"""
+    if not text:
+        return ""
     pattern = re.compile(r'\{([^{}]+)\}')
     while pattern.search(text):
         text = pattern.sub(lambda m: random.choice(m.group(1).split('|')), text)
@@ -92,9 +98,10 @@ def send_batch():
 
         yield json.dumps({"type": "start", "total": total, "sent": 0, "failed": 0, "remaining": total}) + "\n"
 
+        server = None
         try:
             # Connect to Google SMTP
-            server = smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=15)
+            server = smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10)
             server.login(gmail, app_password)
         except Exception as e:
             yield json.dumps({"type": "error", "message": f"SMTP Login Failed: {str(e)}", "total": total, "sent": 0, "failed": total, "remaining": 0}) + "\n"
@@ -102,7 +109,6 @@ def send_batch():
 
         for idx, recipient in enumerate(recipients):
             try:
-                # Dynamic Spintax Rendering per email
                 curr_subject = parse_spintax(subject)
                 curr_body = parse_spintax(body)
 
@@ -111,36 +117,5 @@ def send_batch():
                 msg["To"] = recipient
                 msg["Subject"] = curr_subject
                 msg["Date"] = formatdate(localtime=True)
-                msg["Message-ID"] = make_msgid(domain=gmail.split("@")[-1] if "@" in gmail else "gmail.com")
                 
-                # High Inbox Deliverability Headers
-                msg["X-Mailer"] = "Secure Mail Console v2.0"
-                msg["Auto-Submitted"] = "auto-generated"
-
-                if is_html:
-                    msg.attach(MIMEText(curr_body, "html", "utf-8"))
-                else:
-                    msg.attach(MIMEText(curr_body, "plain", "utf-8"))
-
-                server.sendmail(gmail, [recipient], msg.as_string())
-                sent += 1
-
-                # Random Delay (1.5s - 3s) to bypass Gmail aggressive spam filters
-                time.sleep(random.uniform(1.5, 3.0))
-
-            except Exception:
-                failed += 1
-
-            remaining = total - (sent + failed)
-            yield json.dumps({"type": "progress", "total": total, "sent": sent, "failed": failed, "remaining": remaining}) + "\n"
-
-        try:
-            server.quit()
-        except Exception:
-            pass
-
-        yield json.dumps({"type": "complete", "total": total, "sent": sent, "failed": failed, "remaining": 0, "message": f"Done! Sent: {sent}, Failed: {failed}"}) + "\n"
-
-    return Response(generate_events(), mimetype="application/x-ndjson")
-
-app = app
+                domain = gmail.split("@")[-1] if
