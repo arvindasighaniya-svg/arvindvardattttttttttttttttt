@@ -1507,7 +1507,7 @@ function showToast(message) {
                 "show"
             );
 
-        },
+        }, 
         3500
     );
 }
