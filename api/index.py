@@ -10,7 +10,7 @@ import random
 import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formataddr, formatdate, make_msgid
+from email.utils import formataddr, formatdate, make_msgid 
 from pathlib import Path
 from flask import (
     Flask, render_template, request, jsonify,
