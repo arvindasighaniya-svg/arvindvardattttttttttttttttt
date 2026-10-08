@@ -271,7 +271,7 @@ def send_batch():
                         }) + "\n"
 
                         # Safe 1-second pause to prevent Gmail connection drops
-                        time.sleep(1.0)
+                        time.sleep(0.5)
 
                     except Exception as exc:
                         failed_count += 1
