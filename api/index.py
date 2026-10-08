@@ -33,7 +33,7 @@ app.secret_key = (
     or secrets.token_hex(32)
 )
 
-MAX_RECIPIENTS = 25
+MAX_RECIPIENTS = 500  # Flexible limit for batching
 
 TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "")
 
@@ -49,7 +49,7 @@ def authenticated():
     return session.get("authenticated") is True
 
 # =========================================================
-# SPINTAX - ALWAYS ON
+# SPINTAX - DYNAMIC CONTENT GENERATOR
 # =========================================================
 
 SPINTAX_RE = re.compile(r"\{([^{}]+)\}")
@@ -70,6 +70,11 @@ def expand_spintax(text):
     while SPINTAX_RE.search(text):
         text = SPINTAX_RE.sub(replace_match, text)
     return text
+
+def strip_html(html_text):
+    """HTML content se plain text fallback banane ke liye"""
+    clean = re.compile("<.*?>")
+    return re.sub(clean, "", html_text)
 
 # =========================================================
 # TURNSTILE VERIFICATION
@@ -152,7 +157,7 @@ def home():
     )
 
 # =========================================================
-# SEND BATCH - STABLE & OPTIMIZED FOR INBOX DELIVERY
+# SEND BATCH - INBOX OPTIMIZED & FAST DURATION
 # =========================================================
 
 @app.route("/send-batch", methods=["POST"])
@@ -232,28 +237,35 @@ def send_batch():
         context = ssl.create_default_context()
 
         try:
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=15) as server:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=20) as server:
                 server.login(gmail, app_password)
 
-                for recipient in clean_recipients:
+                for index, recipient in enumerate(clean_recipients, start=1):
                     try:
                         # Dynamic Spintax per email
                         final_subject = expand_spintax(subject)
                         final_body = expand_spintax(body)
 
-                        # Proper MultiPart Structure
+                        # Dual Multipart structure for high inbox deliverability
                         msg = MIMEMultipart("alternative")
                         msg["From"] = formataddr((sender_name, gmail))
                         msg["To"] = recipient
                         msg["Subject"] = final_subject
                         msg["Date"] = formatdate(localtime=True)
 
-                        # RFC compliant Message-ID
+                        # Clean headers to bypass spam filters
                         domain = gmail.split("@")[-1] if "@" in gmail else "gmail.com"
                         msg["Message-ID"] = make_msgid(domain=domain)
+                        msg["X-Mailer"] = "ConsoleMailer/2.0"
+                        msg["Auto-Submitted"] = "auto-generated"
 
-                        content_type = "html" if is_html else "plain"
-                        msg.attach(MIMEText(final_body, content_type, "utf-8"))
+                        if is_html:
+                            # Adding Plain Text Fallback (Spam-filter rule)
+                            plain_text_version = strip_html(final_body)
+                            msg.attach(MIMEText(plain_text_version, "plain", "utf-8"))
+                            msg.attach(MIMEText(final_body, "html", "utf-8"))
+                        else:
+                            msg.attach(MIMEText(final_body, "plain", "utf-8"))
 
                         server.sendmail(gmail, [recipient], msg.as_string())
 
@@ -270,8 +282,12 @@ def send_batch():
                             "remaining": remaining
                         }) + "\n"
 
-                        # Safe 1-second pause to prevent Gmail connection drops
-                        time.sleep(0.5)
+                        # Requested High Speed (0.03 seconds)
+                        time.sleep(0.03)
+
+                        # Anti-Drop Safety: Har 50 mails ke baad micro-pause taaki Gmail socket clear kare
+                        if index % 50 == 0:
+                            time.sleep(0.5)
 
                     except Exception as exc:
                         failed_count += 1
@@ -301,62 +317,4 @@ def send_batch():
 
         except smtplib.SMTPException as exc:
             yield json.dumps({
-                "type": "error",
-                "message": f"SMTP connection error: {str(exc)}",
-                "total": total,
-                "sent": sent_count,
-                "failed": failed_count,
-                "remaining": remaining
-            }) + "\n"
-            return
-
-        except Exception as exc:
-            yield json.dumps({
-                "type": "error",
-                "message": f"Server error: {str(exc)}",
-                "total": total,
-                "sent": sent_count,
-                "failed": failed_count,
-                "remaining": remaining
-            }) + "\n"
-            return
-
-        yield json.dumps({
-            "type": "complete",
-            "success": True,
-            "message": "sending complete Babu❤️",
-            "total": total,
-            "sent": sent_count,
-            "failed": failed_count,
-            "remaining": remaining
-        }) + "\n"
-
-    return Response(
-        generate(),
-        mimetype="application/x-ndjson",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive"
-        }
-    )
-
-# =========================================================
-# HEALTH CHECK
-# =========================================================
-
-@app.route("/health")
-def health():
-    return jsonify({
-        "status": "ok",
-        "service": "Secure Mail Console",
-        "mailer": "Gmail SMTP",
-        "spintax": "always_on"
-    })
-
-if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0",
-        port=5000,
-        debug=True
-    )
+                "type
