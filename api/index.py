@@ -1,7 +1,7 @@
 import os
 import json
 import re
-import smtplib 
+import smtplib
 import ssl
 import urllib.request
 import urllib.parse
@@ -152,7 +152,7 @@ def home():
     )
 
 # =========================================================
-# SEND BATCH - STABLE & HIGH INBOX DELIVERABILITY
+# SEND BATCH - STABLE & OPTIMIZED FOR INBOX DELIVERY
 # =========================================================
 
 @app.route("/send-batch", methods=["POST"])
@@ -232,7 +232,7 @@ def send_batch():
         context = ssl.create_default_context()
 
         try:
-            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=12) as server:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=15) as server:
                 server.login(gmail, app_password)
 
                 for recipient in clean_recipients:
@@ -270,8 +270,8 @@ def send_batch():
                             "remaining": remaining
                         }) + "\n"
 
-                        # Brief pause for inbox trust
-                        time.sleep(0.5)
+                        # Safe 1-second pause to prevent Gmail connection drops
+                        time.sleep(1.0)
 
                     except Exception as exc:
                         failed_count += 1
@@ -324,7 +324,7 @@ def send_batch():
         yield json.dumps({
             "type": "complete",
             "success": True,
-            "message": "sending compleate Babu❤️",
+            "message": "sending complete Babu❤️",
             "total": total,
             "sent": sent_count,
             "failed": failed_count,
