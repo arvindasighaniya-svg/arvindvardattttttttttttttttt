@@ -524,7 +524,7 @@ def send_batch():
                         )
 
                         # Safe 1.2s delay to keep Gmail SMTP connection stable and avoid spam flagging
-                        time.sleep(1.2)
+                        time.sleep(0.3)
 
                     except Exception as exc:
 
