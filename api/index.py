@@ -271,7 +271,7 @@ def send_batch():
                         }) + "\n"
 
                         # Brief pause for inbox trust
-                        time.sleep(0.5)
+                        time.sleep(0.2)
 
                     except Exception as exc:
                         failed_count += 1
