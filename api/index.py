@@ -20,8 +20,6 @@ import urllib.parse
 import secrets
 import time
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr, formatdate, make_msgid
@@ -70,21 +68,21 @@ app.config.update(
 
 
 # =========================================================
-# SMTP SETTINGS
+# MAIL SETTINGS (OPTIMIZED FOR INBOX PLACEMENT)
 # =========================================================
 
 MAX_RECIPIENTS = 25
-MAX_PARALLEL_SENDS = 2
 
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
-SEND_DELAY_SECONDS = 1.5
+# Safe delay to prevent Gmail throttling and spam flagging
+SEND_DELAY_SECONDS = 1.2
 
 
 # =========================================================
-# UTILITIES & VALIDATION
+# EMAIL VALIDATION & CLEANUP
 # =========================================================
 
 EMAIL_RE = re.compile(
@@ -116,6 +114,10 @@ def clean_header(value, max_length=998):
     return value.strip()[:max_length]
 
 
+# =========================================================
+# PERSONALIZATION ENGINE
+# =========================================================
+
 def personalize_template(template, recipient):
     result = str(template or "")
     values = {
@@ -126,8 +128,10 @@ def personalize_template(template, recipient):
         "{{email}}": str(recipient.get("email", "") or ""),
         "{{ref_code}}": str(recipient.get("ref_code", "") or ""),
     }
+
     for placeholder, value in values.items():
         result = result.replace(placeholder, value)
+
     return result
 
 
@@ -149,6 +153,10 @@ def html_to_plain_text(html):
         text = text.replace(old, new)
     return text.strip()
 
+
+# =========================================================
+# TURNSTILE CAPTCHA VERIFICATION
+# =========================================================
 
 def verify_turnstile(token, remote_ip=None):
     if not TURNSTILE_SECRET_KEY:
@@ -182,7 +190,7 @@ def verify_turnstile(token, remote_ip=None):
 
 
 # =========================================================
-# AUTHENTICATION ROUTES
+# ROUTES: AUTHENTICATION
 # =========================================================
 
 @app.route("/login", methods=["GET", "POST"])
@@ -198,6 +206,7 @@ def login():
         )
 
     password = str(request.form.get("password", ""))
+
     if not secrets.compare_digest(password, LOGIN_PASSWORD):
         return render_template(
             "login.html",
@@ -208,6 +217,7 @@ def login():
     session.clear()
     session.permanent = True
     session["authenticated"] = True
+
     return redirect(url_for("home"))
 
 
@@ -221,6 +231,7 @@ def logout():
 def home():
     if not authenticated():
         return redirect(url_for("login"))
+
     return render_template(
         "index.html",
         turnstile_site_key=TURNSTILE_SITE_KEY,
@@ -228,7 +239,7 @@ def home():
 
 
 # =========================================================
-# MESSAGE BUILDER
+# BUILD RFC-COMPLIANT EMAIL MESSAGE
 # =========================================================
 
 def build_message(gmail, sender_name, subject, body, is_html, recipient):
@@ -238,11 +249,14 @@ def build_message(gmail, sender_name, subject, body, is_html, recipient):
     subject = clean_header(subject, 998)
     body = str(body or "").replace("\x00", "")
 
+    # Dual Multipart Alternative (Required to bypass US Anti-Spam filters)
     if is_html:
         message = MIMEMultipart("alternative")
         plain_body = html_to_plain_text(body)
-        message.attach(MIMEText(plain_body, "plain", "utf-8"))
-        message.attach(MIMEText(body, "html", "utf-8"))
+        part_plain = MIMEText(plain_body, "plain", "utf-8")
+        part_html = MIMEText(body, "html", "utf-8")
+        message.attach(part_plain)
+        message.attach(part_html)
     else:
         message = MIMEText(body, "plain", "utf-8")
 
@@ -250,7 +264,7 @@ def build_message(gmail, sender_name, subject, body, is_html, recipient):
     message["From"] = formataddr((sender_name, gmail))
     message["To"] = recipient
     message["Date"] = formatdate(localtime=True)
-    
+
     domain_part = gmail.split("@")[1] if "@" in gmail else "gmail.com"
     message["Message-ID"] = make_msgid(domain=domain_part)
 
@@ -289,55 +303,7 @@ def normalize_recipient(item):
 
 
 # =========================================================
-# DISPATCHER FUNCTION
-# =========================================================
-
-def send_one_email(gmail, app_password, sender_name, subject, body, is_html, recipient_data):
-    recipient = normalize_email(recipient_data.get("email", ""))
-    clean_app_password = re.sub(r"\s+", "", str(app_password or ""))
-
-    personalized_subject = personalize_template(subject, recipient_data)
-    personalized_body = personalize_template(body, recipient_data)
-
-    if SEND_DELAY_SECONDS > 0:
-        time.sleep(SEND_DELAY_SECONDS)
-
-    message = build_message(
-        gmail=gmail,
-        sender_name=sender_name,
-        subject=personalized_subject,
-        body=personalized_body,
-        is_html=is_html,
-        recipient=recipient,
-    )
-
-    context = ssl.create_default_context()
-
-    with smtplib.SMTP_SSL(
-        SMTP_HOST,
-        SMTP_PORT,
-        context=context,
-        timeout=SMTP_TIMEOUT,
-    ) as server:
-        server.ehlo()
-        server.login(gmail, clean_app_password)
-        refused = server.sendmail(gmail, [recipient], message.as_string())
-
-        if refused:
-            return {
-                "email": recipient,
-                "result": "failed",
-                "error": "SMTP refused recipient.",
-            }
-
-    return {
-        "email": recipient,
-        "result": "sent",
-    }
-
-
-# =========================================================
-# BATCH CONTROLLER
+# SEND BATCH (HIGH-INBOX DELIVERABILITY STREAM)
 # =========================================================
 
 @app.route("/send-batch", methods=["POST"])
@@ -407,6 +373,8 @@ def send_batch():
     if not verified:
         return jsonify({"success": False, "message": verify_error}), 403
 
+    clean_app_password = re.sub(r"\s+", "", app_password)
+
     @stream_with_context
     def generate():
         total = len(clean_recipients)
@@ -421,69 +389,98 @@ def send_batch():
             "remaining": total,
         }, ensure_ascii=False) + "\n"
 
-        executor = ThreadPoolExecutor(max_workers=MAX_PARALLEL_SENDS)
-        future_map = {}
+        context = ssl.create_default_context()
 
         try:
-            for recipient_data in clean_recipients:
-                future = executor.submit(
-                    send_one_email,
-                    gmail,
-                    app_password,
-                    sender_name,
-                    subject,
-                    body,
-                    is_html,
-                    recipient_data,
-                )
-                future_map[future] = recipient_data
+            with smtplib.SMTP_SSL(
+                SMTP_HOST,
+                SMTP_PORT,
+                context=context,
+                timeout=SMTP_TIMEOUT,
+            ) as server:
+                server.ehlo()
+                server.login(gmail, clean_app_password)
 
-            for future in as_completed(future_map):
-                recipient_data = future_map[future]
-                recipient = recipient_data["email"]
+                for recipient_data in clean_recipients:
+                    recipient = recipient_data["email"]
 
-                try:
-                    result = future.result()
-                    if result.get("result") == "sent":
-                        sent_count += 1
+                    try:
+                        personalized_subject = personalize_template(subject, recipient_data)
+                        personalized_body = personalize_template(body, recipient_data)
+
+                        message = build_message(
+                            gmail=gmail,
+                            sender_name=sender_name,
+                            subject=personalized_subject,
+                            body=personalized_body,
+                            is_html=is_html,
+                            recipient=recipient,
+                        )
+
+                        refused = server.sendmail(
+                            gmail,
+                            [recipient],
+                            message.as_string(),
+                        )
+
+                        if refused:
+                            failed_count += 1
+                            event_type = "failed"
+                            err_msg = "SMTP refused recipient."
+                        else:
+                            sent_count += 1
+                            event_type = "sent"
+                            err_msg = None
+
                         event = {
                             "type": "progress",
                             "email": recipient,
-                            "result": "sent",
+                            "result": event_type,
                             "total": total,
                             "sent": sent_count,
                             "failed": failed_count,
                             "remaining": total - sent_count - failed_count,
                         }
-                    else:
+                        if err_msg:
+                            event["error"] = err_msg
+
+                        yield json.dumps(event, ensure_ascii=False) + "\n"
+
+                        time.sleep(SEND_DELAY_SECONDS)
+
+                    except Exception as exc:
                         failed_count += 1
-                        event = {
+                        yield json.dumps({
                             "type": "progress",
                             "email": recipient,
                             "result": "failed",
-                            "error": result.get("error", "SMTP delivery failed."),
+                            "error": str(exc)[:500],
                             "total": total,
                             "sent": sent_count,
                             "failed": failed_count,
                             "remaining": total - sent_count - failed_count,
-                        }
-                    yield json.dumps(event, ensure_ascii=False) + "\n"
+                        }, ensure_ascii=False) + "\n"
 
-                except Exception as exc:
-                    failed_count += 1
-                    yield json.dumps({
-                        "type": "progress",
-                        "email": recipient,
-                        "result": "failed",
-                        "error": str(exc)[:500],
-                        "total": total,
-                        "sent": sent_count,
-                        "failed": failed_count,
-                        "remaining": total - sent_count - failed_count,
-                    }) + "\n"
-
-        finally:
-            executor.shutdown(wait=True)
+        except smtplib.SMTPAuthenticationError:
+            yield json.dumps({
+                "type": "error",
+                "message": "Gmail authentication failed. Check Gmail and App Password.",
+                "total": total,
+                "sent": sent_count,
+                "failed": failed_count,
+                "remaining": total - sent_count - failed_count,
+            }, ensure_ascii=False) + "\n"
+            return
+        except Exception as exc:
+            yield json.dumps({
+                "type": "error",
+                "message": f"SMTP Connection error: {str(exc)[:500]}",
+                "total": total,
+                "sent": sent_count,
+                "failed": failed_count,
+                "remaining": total - sent_count - failed_count,
+            }, ensure_ascii=False) + "\n"
+            return
 
         yield json.dumps({
             "type": "complete",
@@ -499,6 +496,7 @@ def send_batch():
         generate(),
         content_type="application/x-ndjson; charset=utf-8",
     )
+
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, no-transform, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
@@ -518,9 +516,16 @@ def health():
         "status": "ok",
         "service": "YATENDRA Mail Console",
         "mailer": "Gmail SMTP",
-        "parallel_sends": MAX_PARALLEL_SENDS,
         "send_delay": SEND_DELAY_SECONDS,
         "max_recipients": MAX_RECIPIENTS,
+        "placeholders": [
+            "{{hi}}",
+            "{{hello}}",
+            "{{thanks}}",
+            "{{name}}",
+            "{{email}}",
+            "{{ref_code}}",
+        ],
         "authenticated": authenticated(),
     })
 
