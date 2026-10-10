@@ -43,7 +43,7 @@ handler = app
 
 
 # =========================================================
-# ENVIRONMENT VARIABLES & SESSIONS
+# ENVIRONMENT VARIABLES
 # =========================================================
 
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "").strip()
@@ -68,7 +68,7 @@ app.config.update(
 
 
 # =========================================================
-# MAIL SETTINGS (OPTIMIZED FOR INBOX PLACEMENT)
+# MAIL SETTINGS
 # =========================================================
 
 MAX_RECIPIENTS = 25
@@ -77,12 +77,12 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
-# Safe delay to prevent Gmail throttling and spam flagging
-SEND_DELAY_SECONDS = 1.2
+# Single connection throttling (keeps SMTP reputation clean)
+SEND_DELAY_SECONDS = 1.5
 
 
 # =========================================================
-# EMAIL VALIDATION & CLEANUP
+# EMAIL VALIDATION & HELPER FUNCTIONS
 # =========================================================
 
 EMAIL_RE = re.compile(
@@ -113,10 +113,6 @@ def clean_header(value, max_length=998):
     value = value.replace("\r", " ").replace("\n", " ")
     return value.strip()[:max_length]
 
-
-# =========================================================
-# PERSONALIZATION ENGINE
-# =========================================================
 
 def personalize_template(template, recipient):
     result = str(template or "")
@@ -154,10 +150,6 @@ def html_to_plain_text(html):
     return text.strip()
 
 
-# =========================================================
-# TURNSTILE CAPTCHA VERIFICATION
-# =========================================================
-
 def verify_turnstile(token, remote_ip=None):
     if not TURNSTILE_SECRET_KEY:
         return False, "TURNSTILE_SECRET_KEY is not configured."
@@ -190,7 +182,7 @@ def verify_turnstile(token, remote_ip=None):
 
 
 # =========================================================
-# ROUTES: AUTHENTICATION
+# LOGIN / LOGOUT / HOME
 # =========================================================
 
 @app.route("/login", methods=["GET", "POST"])
@@ -239,7 +231,7 @@ def home():
 
 
 # =========================================================
-# BUILD RFC-COMPLIANT EMAIL MESSAGE
+# MESSAGE BUILDER
 # =========================================================
 
 def build_message(gmail, sender_name, subject, body, is_html, recipient):
@@ -249,14 +241,11 @@ def build_message(gmail, sender_name, subject, body, is_html, recipient):
     subject = clean_header(subject, 998)
     body = str(body or "").replace("\x00", "")
 
-    # Dual Multipart Alternative (Required to bypass US Anti-Spam filters)
     if is_html:
         message = MIMEMultipart("alternative")
         plain_body = html_to_plain_text(body)
-        part_plain = MIMEText(plain_body, "plain", "utf-8")
-        part_html = MIMEText(body, "html", "utf-8")
-        message.attach(part_plain)
-        message.attach(part_html)
+        message.attach(MIMEText(plain_body, "plain", "utf-8"))
+        message.attach(MIMEText(body, "html", "utf-8"))
     else:
         message = MIMEText(body, "plain", "utf-8")
 
@@ -264,7 +253,7 @@ def build_message(gmail, sender_name, subject, body, is_html, recipient):
     message["From"] = formataddr((sender_name, gmail))
     message["To"] = recipient
     message["Date"] = formatdate(localtime=True)
-
+    
     domain_part = gmail.split("@")[1] if "@" in gmail else "gmail.com"
     message["Message-ID"] = make_msgid(domain=domain_part)
 
@@ -303,7 +292,7 @@ def normalize_recipient(item):
 
 
 # =========================================================
-# SEND BATCH (HIGH-INBOX DELIVERABILITY STREAM)
+# SEND BATCH (SEQUENTIAL STREAM)
 # =========================================================
 
 @app.route("/send-batch", methods=["POST"])
@@ -507,7 +496,7 @@ def send_batch():
 
 
 # =========================================================
-# HEALTH ENDPOINT
+# HEALTH
 # =========================================================
 
 @app.route("/health")
