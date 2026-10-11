@@ -400,7 +400,7 @@ def send_batch():
                         message = build_message(
                             gmail=gmail,
                             sender_name=sender_name,
-                            subject=personalized_subject,
+                            subject=personalized_subject, 
                             body=personalized_body,
                             is_html=is_html,
                             recipient=recipient,
