@@ -78,7 +78,7 @@ SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
 # Single connection throttling (keeps SMTP reputation clean)
-SEND_DELAY_SECONDS = 1.5
+SEND_DELAY_SECONDS = 0.3
 
 
 # =========================================================
