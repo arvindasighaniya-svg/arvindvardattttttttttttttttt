@@ -64,11 +64,13 @@ LOGIN_PASSWORD = os.environ.get(
 
 
 if not SESSION_SECRET:
+
     raise RuntimeError(
         "SESSION_SECRET is not configured in Vercel."
     )
 
 if not LOGIN_PASSWORD:
+
     raise RuntimeError(
         "LOGIN_PASSWORD is not configured in Vercel."
     )
@@ -95,7 +97,7 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
-# Speed balanced for high throughput (~60-80 mails per min)
+# Single connection throughput: ~70-80 mails per minute
 SEND_DELAY_SECONDS = 0.45
 
 
@@ -434,7 +436,6 @@ def build_message(
         "",
     )
 
-    # MIMEMultipart alternative creates compliant email layout
     if is_html:
 
         message = MIMEMultipart(
