@@ -95,7 +95,7 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
-# High Speed Throughput (~130 mails per minute)
+# Balanced delay for optimal throughput (~130 mails per min)
 SEND_DELAY_SECONDS = 0.45
 
 
@@ -487,7 +487,6 @@ def build_message(
 
     message["Message-ID"] = make_msgid(domain=domain_part)
 
-    # Clean headers for anti-spam check
     message["X-Mailer"] = "Python-SMTP-Console"
 
     return message
@@ -719,4 +718,240 @@ def send_batch():
 
     if not body.strip():
 
-        return jsonify
+        return jsonify({
+            "success": False,
+            "message":
+                "Message body is required.",
+        }), 400
+
+    if len(body) > 100_000:
+
+        return jsonify({
+            "success": False,
+            "message":
+                "Message body is too large.",
+        }), 400
+
+    if not isinstance(
+        recipients,
+        list,
+    ):
+
+        return jsonify({
+            "success": False,
+            "message":
+                "Invalid recipient list.",
+        }), 400
+
+    clean_recipients = []
+
+    seen = set()
+
+    for item in recipients:
+
+        recipient = normalize_recipient(
+            item
+        )
+
+        if not recipient:
+            continue
+
+        email = recipient["email"]
+
+        if not valid_email(email):
+            continue
+
+        if email in seen:
+            continue
+
+        seen.add(email)
+
+        clean_recipients.append(
+            recipient
+        )
+
+    clean_recipients = (
+        clean_recipients[
+            :MAX_RECIPIENTS
+        ]
+    )
+
+    if not clean_recipients:
+
+        return jsonify({
+            "success": False,
+            "message":
+                "No valid recipients found.",
+        }), 400
+
+    forwarded_for = request.headers.get(
+        "X-Forwarded-For"
+    )
+
+    if forwarded_for:
+
+        remote_ip = (
+            forwarded_for
+            .split(",", 1)[0]
+            .strip()
+        )
+
+    else:
+
+        remote_ip = request.remote_addr
+
+    verified, verify_error = (
+        verify_turnstile(
+            turnstile_token,
+            remote_ip,
+        )
+    )
+
+    if not verified:
+
+        return jsonify({
+            "success": False,
+            "message": verify_error,
+        }), 403
+
+    clean_app_password = re.sub(
+        r"\s+",
+        "",
+        app_password,
+    )
+
+    @stream_with_context
+    def generate():
+
+        total = len(
+            clean_recipients
+        )
+
+        sent_count = 0
+
+        failed_count = 0
+
+        yield (
+            json.dumps(
+                {
+                    "type": "start",
+                    "total": total,
+                    "sent": 0,
+                    "failed": 0,
+                    "remaining": total,
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
+        context = ssl.create_default_context()
+
+        try:
+
+            with smtplib.SMTP_SSL(
+                SMTP_HOST,
+                SMTP_PORT,
+                context=context,
+                timeout=SMTP_TIMEOUT,
+            ) as server:
+
+                server.ehlo()
+
+                server.login(
+                    gmail,
+                    clean_app_password,
+                )
+
+                for recipient_data in clean_recipients:
+
+                    recipient = recipient_data["email"]
+
+                    try:
+
+                        personalized_subject = personalize_template(
+                            subject,
+                            recipient_data,
+                        )
+
+                        personalized_body = personalize_template(
+                            body,
+                            recipient_data,
+                        )
+
+                        message = build_message(
+                            gmail=gmail,
+                            sender_name=sender_name,
+                            subject=personalized_subject,
+                            body=personalized_body,
+                            is_html=is_html,
+                            recipient=recipient,
+                        )
+
+                        refused = server.sendmail(
+                            gmail,
+                            [recipient],
+                            message.as_string(),
+                        )
+
+                        if refused:
+
+                            failed_count += 1
+
+                            event = {
+                                "type": "progress",
+                                "email": recipient,
+                                "result": "failed",
+                                "error": "SMTP refused recipient.",
+                                "total": total,
+                                "sent": sent_count,
+                                "failed": failed_count,
+                                "remaining": total - sent_count - failed_count,
+                            }
+
+                        else:
+
+                            sent_count += 1
+
+                            event = {
+                                "type": "progress",
+                                "email": recipient,
+                                "result": "sent",
+                                "total": total,
+                                "sent": sent_count,
+                                "failed": failed_count,
+                                "remaining": total - sent_count - failed_count,
+                            }
+
+                        yield (
+                            json.dumps(
+                                event,
+                                ensure_ascii=False,
+                            )
+                            + "\n"
+                        )
+
+                        time.sleep(
+                            SEND_DELAY_SECONDS
+                        )
+
+                    except Exception as exc:
+
+                        failed_count += 1
+
+                        yield json.dumps({
+                            "type": "progress",
+                            "email": recipient,
+                            "result": "failed",
+                            "error": str(exc)[:500],
+                            "total": total,
+                            "sent": sent_count,
+                            "failed": failed_count,
+                            "remaining": total - sent_count - failed_count,
+                        }, ensure_ascii=False) + "\n"
+
+        except smtplib.SMTPAuthenticationError:
+
+            yield json.dumps({
+                "type": "error",
+                "message": "Gmail
