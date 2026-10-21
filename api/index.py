@@ -80,11 +80,11 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
-SEND_DELAY_SECONDS = 1.2
+SEND_DELAY_SECONDS = 1.8
 
 
 # =========================================================
-# EMAIL VALIDATION & SANITIZATION
+# EMAIL VALIDATION
 # =========================================================
 
 EMAIL_RE = re.compile(
@@ -225,7 +225,7 @@ def home():
 
 
 # =========================================================
-# BUILD EMAIL (OPTIMIZED FOR INBOX DELIVERABILITY)
+# BUILD EMAIL (RFC COMPLIANT HEADERS)
 # =========================================================
 
 def build_message(gmail, sender_name, subject, body, is_html, recipient):
@@ -238,7 +238,6 @@ def build_message(gmail, sender_name, subject, body, is_html, recipient):
     if is_html:
         message = MIMEMultipart("alternative")
         plain_body = html_to_plain_text(body)
-        # RFC 2046: Plain text part pehle, HTML part baad me
         message.attach(MIMEText(plain_body, "plain", "utf-8"))
         message.attach(MIMEText(body, "html", "utf-8"))
     else:
@@ -250,14 +249,12 @@ def build_message(gmail, sender_name, subject, body, is_html, recipient):
     message["Reply-To"] = formataddr((sender_name, gmail))
     message["Date"] = formatdate(localtime=True)
 
-    # Domain specific RFC Compliant Message-ID Generation
     domain_part = gmail.split("@")[1] if "@" in gmail else "gmail.com"
     message["Message-ID"] = make_msgid(domain=domain_part)
 
-    # Anti-Spam Filter Headers
     message["MIME-Version"] = "1.0"
     message["X-Mailer"] = "Python-SMTP-Console"
-    message["X-Priority"] = "3"  # Normal Priority
+    message["X-Priority"] = "3"
 
     return message
 
