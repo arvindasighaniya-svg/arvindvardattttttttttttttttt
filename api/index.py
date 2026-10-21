@@ -80,7 +80,7 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
-SEND_DELAY_SECONDS = 1.8
+SEND_DELAY_SECONDS = 1.2
 
 
 # =========================================================
@@ -453,3 +453,67 @@ def send_batch():
 
                 except Exception as exc:
                     failed_count += 1
+                    yield json.dumps({
+                        "type": "progress",
+                        "email": recipient,
+                        "result": "failed",
+                        "error": str(exc)[:500],
+                        "total": total,
+                        "sent": sent_count,
+                        "failed": failed_count,
+                        "remaining": total - sent_count - failed_count,
+                    }, ensure_ascii=False) + "\n"
+
+        finally:
+            executor.shutdown(wait=True)
+
+        yield json.dumps({
+            "type": "complete",
+            "success": True,
+            "message": "Sending completed.",
+            "total": total,
+            "sent": sent_count,
+            "failed": failed_count,
+            "remaining": total - sent_count - failed_count,
+        }, ensure_ascii=False) + "\n"
+
+    response = Response(generate(), content_type="application/x-ndjson; charset=utf-8")
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, no-transform, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["X-Accel-Buffering"] = "no"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+# =========================================================
+# HEALTH CHECK ROUTE
+# =========================================================
+
+@app.route("/health")
+def health():
+    return jsonify({
+        "status": "ok",
+        "service": "YATENDRA Mail Console",
+        "mailer": "Gmail SMTP",
+        "parallel_sends": MAX_PARALLEL_SENDS,
+        "send_delay": SEND_DELAY_SECONDS,
+        "max_recipients": MAX_RECIPIENTS,
+        "placeholders": [
+            "{{hi}}",
+            "{{hello}}",
+            "{{thanks}}",
+            "{{name}}",
+            "{{email}}",
+            "{{ref_code}}",
+        ],
+        "authenticated": authenticated(),
+    })
+
+
+# =========================================================
+# LOCAL EXECUTION
+# =========================================================
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=False)
