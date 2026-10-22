@@ -29,7 +29,7 @@ from pathlib import Path
 
 
 # =========================================================
-# APP
+# APP CONFIGURATION
 # =========================================================
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -45,7 +45,7 @@ handler = app
 
 
 # =========================================================
-# EXISTING VERCEL ENV VARIABLES
+# ENVIRONMENT VARIABLES
 # =========================================================
 
 SESSION_SECRET = os.environ.get(
@@ -397,7 +397,7 @@ def home():
 
 
 # =========================================================
-# BUILD EMAIL (INBOX ENHANCED HEADERS)
+# BUILD EMAIL
 # =========================================================
 
 def build_message(
@@ -426,58 +426,3 @@ def build_message(
         body or ""
     ).replace(
         "\x00",
-        "",
-    )
-
-    if is_html:
-
-        message = MIMEMultipart(
-            "alternative"
-        )
-
-        plain_body = html_to_plain_text(
-            body
-        )
-
-        # RFC 2046: Plain text part first, HTML part second
-        message.attach(
-            MIMEText(
-                plain_body,
-                "plain",
-                "utf-8",
-            )
-        )
-
-        message.attach(
-            MIMEText(
-                body,
-                "html",
-                "utf-8",
-            )
-        )
-
-    else:
-
-        message = MIMEText(
-            body,
-            "plain",
-            "utf-8",
-        )
-
-    message["Subject"] = subject
-
-    message["From"] = formataddr(
-        (
-            sender_name,
-            gmail,
-        )
-    )
-
-    message["To"] = recipient
-
-    message["Reply-To"] = formataddr(
-        (
-            sender_name,
-            gmail,
-        )
-    )
