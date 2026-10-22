@@ -528,7 +528,7 @@ def send_batch():
 def health():
     return jsonify({
         "status": "ok",
-        "service": "YATENDRA Mail Console",
+        "service": "YATENDRA Mail Console", 
         "mailer": "Gmail SMTP",
         "send_delay": SEND_DELAY_SECONDS,
         "max_recipients": MAX_RECIPIENTS,
