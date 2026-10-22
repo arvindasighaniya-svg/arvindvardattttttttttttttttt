@@ -88,17 +88,17 @@ app.config.update(
 
 
 # =========================================================
-# MAIL SETTINGS (INBOX DELIVERY OPTIMIZED)
+# MAIL SETTINGS
 # =========================================================
 
 MAX_RECIPIENTS = 25
-MAX_PARALLEL_SENDS = 2  # Safe limit to avoid Gmail rate-limit spam flag
+MAX_PARALLEL_SENDS = 4
 
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
-SEND_DELAY_SECONDS = 2.0  # Safe interval between parallel sends
+SEND_DELAY_SECONDS = 1.8
 
 
 # =========================================================
@@ -397,7 +397,7 @@ def home():
 
 
 # =========================================================
-# BUILD EMAIL (INBOX DELIVERABILITY FIXED)
+# BUILD EMAIL (INBOX ENHANCED HEADERS)
 # =========================================================
 
 def build_message(
@@ -439,7 +439,7 @@ def build_message(
             body
         )
 
-        # RFC 2046 Compliance: Plain text part first, HTML part second
+        # RFC 2046: Plain text part first, HTML part second
         message.attach(
             MIMEText(
                 plain_body,
@@ -481,116 +481,3 @@ def build_message(
             gmail,
         )
     )
-
-    message["Date"] = formatdate(
-        localtime=True
-    )
-
-    # Valid Domain Message-ID Fix (Avoids bot spam filter)
-    domain_part = gmail.split("@")[1] if "@" in gmail else "gmail.com"
-    message["Message-ID"] = make_msgid(
-        domain=domain_part
-    )
-
-    # Anti-Spam Headers
-    message["MIME-Version"] = "1.0"
-    message["X-Mailer"] = "Python-SMTP-Console"
-    message["X-Priority"] = "3"
-
-    return message
-
-
-# =========================================================
-# NORMALIZE RECIPIENT
-# =========================================================
-
-def normalize_recipient(item):
-
-    # Simple email:
-    #
-    # "user@example.com"
-
-    if isinstance(item, str):
-
-        return {
-            "email": normalize_email(item),
-            "name": "",
-            "hi": "",
-            "hello": "",
-            "thanks": "",
-            "ref_code": "",
-        }
-
-    # Detailed recipient:
-    #
-    # {
-    #    "email": "...",
-    #    "name": "...",
-    #    "hi": "Hi",
-    #    "hello": "Hello",
-    #    "thanks": "Thanks",
-    #    "ref_code": "HF8552"
-    # }
-
-    if not isinstance(item, dict):
-        return None
-
-    email = normalize_email(
-        item.get("email", "")
-    )
-
-    name = str(
-        item.get("name", "")
-        or ""
-    ).strip()
-
-    hi = str(
-        item.get("hi", "")
-        or ""
-    ).strip()
-
-    hello = str(
-        item.get("hello", "")
-        or ""
-    ).strip()
-
-    thanks = str(
-        item.get("thanks", "")
-        or ""
-    ).strip()
-
-    ref_code = str(
-        item.get("ref_code", "")
-        or ""
-    ).strip()
-
-    # Clean values that might later
-    # appear in mail content.
-
-    name = (
-        name
-        .replace("\r", " ")
-        .replace("\n", " ")
-    )
-
-    hi = (
-        hi
-        .replace("\r", " ")
-        .replace("\n", " ")
-    )
-
-    hello = (
-        hello
-        .replace("\r", " ")
-        .replace("\n", " ")
-    )
-
-    thanks = (
-        thanks
-        .replace("\r", " ")
-        .replace("\n", " ")
-    )
-
-    ref_code = (
-        ref_code
-        .replace("\r", " ")
