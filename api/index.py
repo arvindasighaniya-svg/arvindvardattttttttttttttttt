@@ -1,11 +1,12 @@
-
 import os
 import re
 import ssl
 import time
 import smtplib
 from email.message import EmailMessage
-from email.utils import formataddr
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr, formatdate, make_msgid
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -20,8 +21,10 @@ app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024
 
 LOGIN_PASSWORD = os.environ.get("LOGIN_PASSWORD", "")
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-MAIL_GAP_SECONDS = max(0.0, min(float(os.environ.get("MAIL_GAP_SECONDS", "1")), 10.0))
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
+
+# Speed optimized: ~0.35s gap ensures roughly 24 emails in ~8-9 seconds safely
+MAIL_GAP_SECONDS = max(0.0, min(float(os.environ.get("MAIL_GAP_SECONDS", "0.35")), 10.0))
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -31,14 +34,30 @@ def logged_in():
 
 def send_smtp(to_email, subject, body, sender_name, sender_email,
               app_password, html_mode=False):
-    message = EmailMessage()
-    message["From"] = formataddr((sender_name or sender_email, sender_email))
-    message["To"] = to_email
-    message["Subject"] = subject
-    message.set_content(body)
-
+    
+    # Inbox optimization: Proper MIME structure to prevent spam folder landing
     if html_mode:
-        message.add_alternative(body, subtype="html")
+        message = MIMEMultipart("alternative")
+        plain_fallback = re.sub(r'<[^>]+>', '', body)
+        message.attach(MIMEText(plain_fallback, "plain", "utf-8"))
+        message.attach(MIMEText(body, "html", "utf-8"))
+    else:
+        message = MIMEMultipart()
+        message.attach(MIMEText(body, "plain", "utf-8"))
+
+    clean_sender_name = str(sender_name or sender_email).replace("\r", "").replace("\n", "")
+    message["From"] = formataddr((clean_sender_name, sender_email))
+    message["To"] = to_email
+    message["Subject"] = str(subject).replace("\r", "").replace("\n", "")
+    message["Reply-To"] = formataddr((clean_sender_name, sender_email))
+    message["Date"] = formatdate(localtime=True)
+    
+    # Matching Message-ID domain with sender email for high trust score
+    domain_part = sender_email.split("@")[1] if "@" in sender_email else "gmail.com"
+    message["Message-ID"] = make_msgid(domain=domain_part)
+    message["MIME-Version"] = "1.0"
+    message["X-Mailer"] = "Python-SMTP-Service"
+    message["X-Priority"] = "3"
 
     context = ssl.create_default_context()
 
@@ -49,14 +68,14 @@ def send_smtp(to_email, subject, body, sender_name, sender_email,
                     SMTP_HOST, SMTP_PORT, timeout=20, context=context
                 ) as server:
                     server.login(sender_email, app_password)
-                    refused = server.send_message(message)
+                    refused = server.sendmail(sender_email, [to_email], message.as_string())
             else:
                 with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
                     server.ehlo()
                     server.starttls(context=context)
                     server.ehlo()
                     server.login(sender_email, app_password)
-                    refused = server.send_message(message)
+                    refused = server.sendmail(sender_email, [to_email], message.as_string())
 
             if refused:
                 return False, "Recipient rejected by SMTP server"
@@ -70,7 +89,7 @@ def send_smtp(to_email, subject, body, sender_name, sender_email,
             return False, f"SMTP rejected message (code {exc.smtp_code})"
         except (smtplib.SMTPException, OSError, TimeoutError) as exc:
             if attempt == 0:
-                time.sleep(1)
+                time.sleep(0.5)
             else:
                 return False, f"SMTP connection failed: {str(exc)[:160]}"
 
