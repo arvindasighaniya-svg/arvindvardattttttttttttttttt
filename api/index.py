@@ -23,8 +23,8 @@ LOGIN_PASSWORD = os.environ.get("LOGIN_PASSWORD", "")
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 
-# Speed optimized: ~0.35s gap ensures roughly 24 emails in ~8-9 seconds safely
-MAIL_GAP_SECONDS = max(0.0, min(float(os.environ.get("MAIL_GAP_SECONDS", "0.35")), 10.0))
+# Speed optimized: ~0.38s gap ensures exactly 24 emails in ~9 seconds safely
+MAIL_GAP_SECONDS = max(0.0, min(float(os.environ.get("MAIL_GAP_SECONDS", "0.38")), 10.0))
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -33,7 +33,7 @@ def logged_in():
 
 
 def build_email_message(to_email, subject, body, sender_name, sender_email, html_mode=False):
-    """MIME message builder optimized for high inbox trust score."""
+    """Advanced MIME message builder optimized for Primary Inbox placement."""
     if html_mode:
         message = MIMEMultipart("alternative")
         plain_fallback = re.sub(r'<[^>]+>', '', body)
@@ -51,9 +51,13 @@ def build_email_message(to_email, subject, body, sender_name, sender_email, html
     message["Date"] = formatdate(localtime=True)
     
     domain_part = sender_email.split("@")[1] if "@" in sender_email else "gmail.com"
+    
+    # Anti-spam & Deliverability Headers
     message["Message-ID"] = make_msgid(domain=domain_part)
+    message["X-Entity-Ref-ID"] = make_msgid(domain=domain_part)
+    message["Auto-Submitted"] = "no"
     message["MIME-Version"] = "1.0"
-    message["X-Mailer"] = "Python-SMTP-Service"
+    message["X-Mailer"] = "Microsoft Outlook 16.0"  # Professional mailer signature to improve trust score
     message["X-Priority"] = "3"
     return message
 
@@ -124,51 +128,4 @@ def send_batch():
     if len(recipients) > 25:
         return jsonify({"error": "Maximum 25 recipients per batch."}), 400
     if not subject or not body:
-        return jsonify({"error": "Subject and message are required."}), 400
-
-    results = []
-    context = ssl.create_default_context()
-
-    # Connection Reuse (Persistent SMTP Session) for maximum speed (~24 emails in ~8-9s)
-    try:
-        if SMTP_PORT == 465:
-            server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20, context=context)
-        else:
-            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20)
-            server.ehlo()
-            server.starttls(context=context)
-            server.ehlo()
-
-        server.login(sender_email, app_password)
-
-        for i, recipient in enumerate(recipients):
-            try:
-                msg = build_email_message(recipient, subject, body, sender_name, sender_email, html_mode)
-                refused = server.sendmail(sender_email, [recipient], msg.as_string())
-                if refused:
-                    results.append({"email": recipient, "status": "failed", "detail": "Recipient rejected by SMTP server"})
-                else:
-                    results.append({"email": recipient, "status": "sent", "detail": "SMTP accepted the message"})
-            except Exception as exc:
-                results.append({"email": recipient, "status": "failed", "detail": f"Failed: {str(exc)[:120]}"})
-
-            if i < len(recipients) - 1 and MAIL_GAP_SECONDS > 0:
-                time.sleep(MAIL_GAP_SECONDS)
-
-        try:
-            server.quit()
-        except:
-            pass
-
-    except smtplib.SMTPAuthenticationError:
-        return jsonify({"error": "Login failed. Check Gmail address and App Password."}), 400
-    except Exception as exc:
-        return jsonify({"error": f"SMTP connection failed: {str(exc)[:160]}"}), 500
-
-    sent = sum(item["status"] == "sent" for item in results)
-    return jsonify({
-        "total": len(results),
-        "sent": sent,
-        "failed": len(results) - sent,
-        "results": results
-    })
+        return jsonify({"error":
