@@ -32,10 +32,8 @@ def logged_in():
     return session.get("logged_in") is True
 
 
-def send_smtp(to_email, subject, body, sender_name, sender_email,
-              app_password, html_mode=False):
-    
-    # Inbox optimization: Proper MIME structure to prevent spam folder landing
+def build_email_message(to_email, subject, body, sender_name, sender_email, html_mode=False):
+    """MIME message builder optimized for high inbox trust score."""
     if html_mode:
         message = MIMEMultipart("alternative")
         plain_fallback = re.sub(r'<[^>]+>', '', body)
@@ -52,48 +50,12 @@ def send_smtp(to_email, subject, body, sender_name, sender_email,
     message["Reply-To"] = formataddr((clean_sender_name, sender_email))
     message["Date"] = formatdate(localtime=True)
     
-    # Matching Message-ID domain with sender email for high trust score
     domain_part = sender_email.split("@")[1] if "@" in sender_email else "gmail.com"
     message["Message-ID"] = make_msgid(domain=domain_part)
     message["MIME-Version"] = "1.0"
     message["X-Mailer"] = "Python-SMTP-Service"
     message["X-Priority"] = "3"
-
-    context = ssl.create_default_context()
-
-    for attempt in range(2):
-        try:
-            if SMTP_PORT == 465:
-                with smtplib.SMTP_SSL(
-                    SMTP_HOST, SMTP_PORT, timeout=20, context=context
-                ) as server:
-                    server.login(sender_email, app_password)
-                    refused = server.sendmail(sender_email, [to_email], message.as_string())
-            else:
-                with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
-                    server.ehlo()
-                    server.starttls(context=context)
-                    server.ehlo()
-                    server.login(sender_email, app_password)
-                    refused = server.sendmail(sender_email, [to_email], message.as_string())
-
-            if refused:
-                return False, "Recipient rejected by SMTP server"
-            return True, "SMTP accepted the message"
-
-        except smtplib.SMTPAuthenticationError:
-            return False, "Login failed. Check Gmail address and App Password."
-        except smtplib.SMTPRecipientsRefused:
-            return False, "Recipient address rejected by SMTP server"
-        except smtplib.SMTPDataError as exc:
-            return False, f"SMTP rejected message (code {exc.smtp_code})"
-        except (smtplib.SMTPException, OSError, TimeoutError) as exc:
-            if attempt == 0:
-                time.sleep(0.5)
-            else:
-                return False, f"SMTP connection failed: {str(exc)[:160]}"
-
-    return False, "SMTP failed"
+    return message
 
 
 @app.get("/health")
@@ -165,18 +127,43 @@ def send_batch():
         return jsonify({"error": "Subject and message are required."}), 400
 
     results = []
-    for i, recipient in enumerate(recipients):
-        ok, detail = send_smtp(
-            recipient, subject, body, sender_name, sender_email,
-            app_password, html_mode
-        )
-        results.append({
-            "email": recipient,
-            "status": "sent" if ok else "failed",
-            "detail": detail
-        })
-        if i < len(recipients) - 1 and MAIL_GAP_SECONDS:
-            time.sleep(MAIL_GAP_SECONDS)
+    context = ssl.create_default_context()
+
+    # Connection Reuse (Persistent SMTP Session) for maximum speed (~24 emails in ~8-9s)
+    try:
+        if SMTP_PORT == 465:
+            server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20, context=context)
+        else:
+            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20)
+            server.ehlo()
+            server.starttls(context=context)
+            server.ehlo()
+
+        server.login(sender_email, app_password)
+
+        for i, recipient in enumerate(recipients):
+            try:
+                msg = build_email_message(recipient, subject, body, sender_name, sender_email, html_mode)
+                refused = server.sendmail(sender_email, [recipient], msg.as_string())
+                if refused:
+                    results.append({"email": recipient, "status": "failed", "detail": "Recipient rejected by SMTP server"})
+                else:
+                    results.append({"email": recipient, "status": "sent", "detail": "SMTP accepted the message"})
+            except Exception as exc:
+                results.append({"email": recipient, "status": "failed", "detail": f"Failed: {str(exc)[:120]}"})
+
+            if i < len(recipients) - 1 and MAIL_GAP_SECONDS > 0:
+                time.sleep(MAIL_GAP_SECONDS)
+
+        try:
+            server.quit()
+        except:
+            pass
+
+    except smtplib.SMTPAuthenticationError:
+        return jsonify({"error": "Login failed. Check Gmail address and App Password."}), 400
+    except Exception as exc:
+        return jsonify({"error": f"SMTP connection failed: {str(exc)[:160]}"}), 500
 
     sent = sum(item["status"] == "sent" for item in results)
     return jsonify({
