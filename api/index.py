@@ -289,7 +289,7 @@ def home():
 
 
 # =========================================================
-# BUILD EMAIL (Inbox Optimized Headers)
+# BUILD EMAIL (Advanced Inbox-Optimized Headers)
 # =========================================================
 
 def build_message(
@@ -307,7 +307,6 @@ def build_message(
     subject = clean_header(subject, 998)
     body = str(body or "").replace("\x00", "")
 
-    # Extract domain for legitimate Message-ID generation
     domain = gmail.split("@")[-1] if "@" in gmail else "gmail.com"
 
     if is_html:
@@ -317,17 +316,26 @@ def build_message(
         message.attach(MIMEText(plain_body, "plain", "utf-8"))
         message.attach(MIMEText(body, "html", "utf-8"))
     else:
-        message = MIMEText(body, "plain", "utf-8")
+        message = MIMEMultipart()
+        message.attach(MIMEText(body, "plain", "utf-8"))
 
-    message["Subject"] = subject
-    message["From"] = formataddr((sender_name, gmail))
-    message["To"] = recipient
-    message["Date"] = formatdate(localtime=True)
-    message["Message-ID"] = make_msgid(domain=domain)
+    clean_name = str(sender_name or gmail).replace("\r", "").replace("\n", "")
     
-    # Anti-Spam enhancement headers
-    message["X-Mailer"] = "YATENDRA Mail Console"
-    message["Precedence"] = "bulk"
+    # Standard Core Headers
+    message["Subject"] = subject
+    message["From"] = formataddr((clean_name, gmail))
+    message["To"] = recipient
+    message["Reply-To"] = formataddr((clean_name, gmail))
+    message["Date"] = formatdate(localtime=True)
+    
+    # High Trust & Anti-Spam Headers to bypass spam filters
+    message["Message-ID"] = make_msgid(domain=domain)
+    message["X-Entity-Ref-ID"] = make_msgid(domain=domain)
+    message["Feedback-ID"] = f"batchmail:{domain}"
+    message["Auto-Submitted"] = "no"
+    message["MIME-Version"] = "1.0"
+    message["X-Mailer"] = "Microsoft Outlook 16.0"
+    message["X-Priority"] = "3"
 
     return message
 
