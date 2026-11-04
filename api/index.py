@@ -66,15 +66,13 @@ app.config.update(
 # MAIL SETTINGS
 # =========================================================
 
-MAX_RECIPIENTS = 100
+MAX_RECIPIENTS = 25
 
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
-# Speed optimization: 24 emails in ~13 seconds translates to ~0.54 seconds per email.
-# We set SEND_DELAY_SECONDS to 0.5 to meet your exact speed requirement safely.
-SEND_DELAY_SECONDS = 0.5
+SEND_DELAY_SECONDS = 0.45
 
 # =========================================================
 # EMAIL VALIDATION & HELPERS
@@ -238,7 +236,7 @@ def home():
 
 
 # =========================================================
-# BUILD INBOX-OPTIMIZED MIME MESSAGE
+# BUILD STANDARD MIME MESSAGE
 # =========================================================
 
 def build_message(gmail, sender_name, subject, body, is_html, recipient):
@@ -249,20 +247,18 @@ def build_message(gmail, sender_name, subject, body, is_html, recipient):
     clean_subj = clean_header(subject, 998)
     body = str(body or "").replace("\x00", "")
 
-    # Always use multipart/alternative for better inbox deliverability (spam score reduction)
-    message = MIMEMultipart("alternative")
-    
     if is_html:
+        message = MIMEMultipart("alternative")
         plain_body = html_to_plain_text(body)
+
         part_text = MIMEText(plain_body, "plain", "utf-8")
         part_html = MIMEText(body, "html", "utf-8")
+
         message.attach(part_text)
         message.attach(part_html)
     else:
-        part_text = MIMEText(body, "plain", "utf-8")
-        message.attach(part_text)
+        message = MIMEText(body, "plain", "utf-8")
 
-    # Required and anti-spam headers
     message["Subject"] = Header(clean_subj, "utf-8")
     message["From"] = formataddr((str(Header(clean_sender, "utf-8")), gmail))
     message["To"] = recipient
@@ -270,11 +266,6 @@ def build_message(gmail, sender_name, subject, body, is_html, recipient):
 
     domain_part = gmail.split("@")[1] if "@" in gmail else "gmail.com"
     message["Message-ID"] = make_msgid(domain=domain_part)
-    message["MIME-Version"] = "1.0"
-    
-    # Custom headers to improve trust score and bypass spam filters
-    message["X-Mailer"] = "YATENDRA Mail Console"
-    message["X-Priority"] = "3"
 
     return message
 
