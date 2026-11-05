@@ -72,7 +72,7 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
-SEND_DELAY_SECONDS = 0.15
+SEND_DELAY_SECONDS = 0.20
 
 # =========================================================
 # EMAIL VALIDATION & HELPERS
