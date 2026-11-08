@@ -73,7 +73,7 @@ SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
 # Safe pacing to avoid spam triggers
-SEND_DELAY_SECONDS = 0.8
+SEND_DELAY_SECONDS = 0.2
 
 # =========================================================
 # EMAIL VALIDATION & HELPERS
