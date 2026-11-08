@@ -72,7 +72,8 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 SMTP_TIMEOUT = 25
 
-SEND_DELAY_SECONDS = 0.45
+# Safe pacing to avoid spam triggers
+SEND_DELAY_SECONDS = 0.8
 
 # =========================================================
 # EMAIL VALIDATION & HELPERS
@@ -236,7 +237,7 @@ def home():
 
 
 # =========================================================
-# BUILD STANDARD MIME MESSAGE
+# BUILD ENTERPRISE-GRADE MIME MESSAGE (INBOX OPTIMIZED)
 # =========================================================
 
 def build_message(gmail, sender_name, subject, body, is_html, recipient):
@@ -247,17 +248,18 @@ def build_message(gmail, sender_name, subject, body, is_html, recipient):
     clean_subj = clean_header(subject, 998)
     body = str(body or "").replace("\x00", "")
 
-    if is_html:
-        message = MIMEMultipart("alternative")
-        plain_body = html_to_plain_text(body)
+    message = MIMEMultipart("alternative")
 
-        part_text = MIMEText(plain_body, "plain", "utf-8")
-        part_html = MIMEText(body, "html", "utf-8")
+    # Clean plain text and HTML parts
+    plain_body = html_to_plain_text(body)
+    part_text = MIMEText(plain_body, "plain", "utf-8")
+    
+    # Styled HTML wrapper for professional look
+    wrapped_html = f'<div dir="ltr" style="font-family: Arial, sans-serif; font-size: 14px; color: #333333;">{body}</div>'
+    part_html = MIMEText(wrapped_html, "html", "utf-8")
 
-        message.attach(part_text)
-        message.attach(part_html)
-    else:
-        message = MIMEText(body, "plain", "utf-8")
+    message.attach(part_text)
+    message.attach(part_html)
 
     message["Subject"] = Header(clean_subj, "utf-8")
     message["From"] = formataddr((str(Header(clean_sender, "utf-8")), gmail))
@@ -265,7 +267,18 @@ def build_message(gmail, sender_name, subject, body, is_html, recipient):
     message["Date"] = formatdate(localtime=True)
 
     domain_part = gmail.split("@")[1] if "@" in gmail else "gmail.com"
-    message["Message-ID"] = make_msgid(domain=domain_part)
+    unique_msg_id = make_msgid(domain=domain_part)
+    thread_id = f"<thread.{secrets.token_hex(8)}@{domain_part}>"
+
+    # High-deliverability corporate headers to bypass spam filters
+    message["Message-ID"] = unique_msg_id
+    message["X-Mailer"] = "Microsoft Outlook 16.0"
+    message["X-Priority"] = "3"
+    message["Importance"] = "Normal"
+    message["X-MSMail-Priority"] = "Normal"
+    message["References"] = thread_id
+    message["In-Reply-To"] = thread_id
+    message["List-Unsubscribe"] = f"<mailto:{gmail}?subject=unsubscribe>"
 
     return message
 
@@ -331,30 +344,21 @@ def send_batch():
     app_password = str(data.get("app_password", "")).strip()
     subject = clean_header(data.get("subject", ""), 998)
     body = str(data.get("body", ""))
-    is_html = data.get("is_html", False) is True
+    is_html = data.get("is_html", True)  # Default to HTML for better rendering
     recipients = data.get("recipients", [])
     turnstile_token = str(data.get("turnstile_token", "")).strip()
 
     if not sender_name:
         return jsonify({"success": False, "message": "Sender Name is required."}), 400
 
-    if not valid_email(gmail):
+    if not valid_email(gmail) or not gmail.lower().endswith("@gmail.com"):
         return jsonify({"success": False, "message": "Enter a valid Gmail address."}), 400
-
-    if not gmail.lower().endswith("@gmail.com"):
-        return jsonify({"success": False, "message": "Please use a Gmail address with Gmail SMTP."}), 400
 
     if not app_password:
         return jsonify({"success": False, "message": "Google App Password is required."}), 400
 
-    if not subject:
-        return jsonify({"success": False, "message": "Email subject is required."}), 400
-
-    if not body.strip():
-        return jsonify({"success": False, "message": "Message body is required."}), 400
-
-    if len(body) > 100_000:
-        return jsonify({"success": False, "message": "Message body is too large."}), 400
+    if not subject or not body.strip():
+        return jsonify({"success": False, "message": "Subject and message body are required."}), 400
 
     if not isinstance(recipients, list):
         return jsonify({"success": False, "message": "Invalid recipient list."}), 400
@@ -459,6 +463,7 @@ def send_batch():
                             }
 
                         yield json.dumps(event, ensure_ascii=False) + "\n"
+                        # Human-like delay between each email to prevent getting flagged by spam filters
                         time.sleep(SEND_DELAY_SECONDS)
 
                     except Exception as exc:
@@ -532,14 +537,6 @@ def health():
         "mailer": "Gmail SMTP",
         "send_delay": SEND_DELAY_SECONDS,
         "max_recipients": MAX_RECIPIENTS,
-        "placeholders": [
-            "{{hi}}",
-            "{{hello}}",
-            "{{thanks}}",
-            "{{name}}",
-            "{{email}}",
-            "{{ref_code}}",
-        ],
         "authenticated": authenticated(),
     })
 
