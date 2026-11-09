@@ -157,7 +157,6 @@ def send_via_resend(sender_name, sender_email, recipient_email, subject, html_bo
     if not RESEND_API_KEY:
         return False, "RESEND_API_KEY is missing."
 
-    # Resend free tier me 'onboarding@resend.dev' ya apna verified domain use hota hai
     payload = {
         "from": f"{sender_name} <onboarding@resend.dev>",
         "to": [recipient_email],
